@@ -12,4 +12,8 @@ For running on ImageNet with ResNet, you can run the following:
 ```
 python run_exps.py --script_path exps/exp_imagenet_resnet.py
 ```
+For running on OfficeHome with ResNet, you can run the following:
+```
+python run_exps.py --script_path exps/exp_oh_resnet.py
+```
 
