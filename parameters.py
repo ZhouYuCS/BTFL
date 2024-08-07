@@ -129,15 +129,18 @@ def get_args():
     # FedTHE and FedTHE+.
     parser.add_argument("--rep_len", default=64, type=int)
     parser.add_argument("--is_rep_history_reused", default=False, type=str2bool)
-    parser.add_argument("--THE_steps", default=20, type=int)
+    parser.add_argument("--THE_steps", default=6, type=int)
     parser.add_argument("--THE_alpha", default=0.1, type=float)
     parser.add_argument("--THE_beta", default=0.1, type=float)
     # DFRA
     parser.add_argument("--drfa_sync_gap", default=1, type=int)
     parser.add_argument("--drfa_lambda_lr", default=0.01, type=float)
+    #moon
+    
 
+    
     # data, training and learning scheme.
-    parser.add_argument("--comm_buffer_size", type=int, default=100)
+    parser.add_argument("--comm_buffer_size", type=int, default=1200)
     parser.add_argument("--n_comm_rounds", type=int, default=100)
     parser.add_argument(
         "--target_perf", type=float, default=None, help="it is between [0, 100]."
@@ -164,7 +167,7 @@ def get_args():
     )
     parser.add_argument(
         "--n_master_sampled_clients",
-        default=20,
+        default=6,
         type=int,
         help="number of clients sampled by master",
     )  # Note: this determines the accepted number of client updates.
@@ -242,7 +245,7 @@ def get_args():
 
     # miscs
     parser.add_argument("--same_seed_process", type=str2bool, default=True)
-    parser.add_argument("--manual_seed", type=int, default=6, help="manual seed")
+    parser.add_argument("--manual_seed", type=int, default=666, help="manual seed")
     parser.add_argument(
         "--evaluate",
         "-e",
@@ -284,8 +287,20 @@ def get_args():
     parser.add_argument("--script_path", default="exps/exp_cifar10_cnn.py", type=str)
     parser.add_argument("--script_class_name", default=None, type=str)
     parser.add_argument("--num_jobs_per_node", default=1, type=int)
-    parser.add_argument("--wait_in_seconds_per_job", default=30, type=int)
-
+    parser.add_argument("--wait_in_seconds_per_job", default=20, type=int)
+     
+    parser.add_argument("--dde_layers", default=4, type=int)
+    parser.add_argument("--sigma", default=0.01, type=float)
+    parser.add_argument("--dde_epoch", default=5, type=int)
+    parser.add_argument("--mu",type=float,default=0)
+    parser.add_argument("--nu",type=float,default=0)
+    parser.add_argument("--q_level",type=int,default=16)
+    parser.add_argument("--temperature",type=float,default=1e-5)
+    parser.add_argument("--cof",type=float,default=0)
+    parser.add_argument("--kb",type=float,default=1)
+    parser.add_argument("--pder",type=int,default=1)
+    parser.add_argument("--talpha",type=float,default=0.1)
+    parser.add_argument("--update_condition", type=float, default=5)
     # parse conf.
     conf = parser.parse_args()
     return conf
