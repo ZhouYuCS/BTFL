@@ -8,7 +8,7 @@ class NewConf(object):
         experiment=["debug"],
         # use world to control the distribution of clients on cuda devices.
         # for advanced usage, use world_conf instead, see ./pcode/utils/topology.py
-        world=["0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1"],
+        world=["0,0,0,0,0,0,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2"],
         on_cuda=[True],
         python_path=["/opt/conda/bin/python"],
         hostfile=["env/hostfile"],
@@ -20,14 +20,15 @@ class NewConf(object):
         # general for fl.
         n_clients=[20],
         data=["cifar10"],
-        data_dir=["~/data"],
+        data_dir=["/home/default_user/data"],
         batch_size=[32],
         num_workers=[0],
         # fl master
-        n_comm_rounds=[100],
+        n_comm_rounds=[90],
         early_stopping_rounds=[0],
         # fl clients
-        group_norm_num_groups=[2],
+        group_norm_num_groups=[1],
+        rep_len=[64],
         arch=["resnet20"],
         complex_arch=["master=resnet20,worker=resnet20"],
         optimizer=["sgd"],
@@ -37,11 +38,21 @@ class NewConf(object):
         lr=[0.01],
         personal_lr=[0.01],
         participation_ratio=[1.0],
-        partition_data_conf=["distribution=non_iid_dirichlet,non_iid_alpha=1.0,size_conf=1:1"],
-        personalization_scheme=["method=Fine_tune",
-                                "method=T3A",
-                                "method=FedRod",
-                                "method=THE",
-                                "method=THE_FT",
-                                "method=Memo_personal"],
+        q_level=[2],
+        sigma=[0.000],
+        mu=[0.7],
+        nu=[0],
+        cof=[5],
+        temperature=[0.05],
+        kb=[10],
+       
+        update_condition=[3000],
+        talpha=[0.5],
+        partition_data_conf=["distribution=non_iid_dirichlet,non_iid_alpha=0.1,size_conf=1:1"],
+        personalization_scheme=[
+                            
+                                "method=Memo_personal",
+                                "method=THE",  
+                                "method=ttt"
+                                ],
     )
