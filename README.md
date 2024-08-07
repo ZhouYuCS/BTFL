@@ -1,5 +1,5 @@
 # How to Run
-The main entry point of a single experiment is [`main.py`](main.py). To facilitate experiments running, we provide [`scripts`](exps/) for running the bulk experiments in the paper. For example, to run `BTFL` and other baselines on CIFAR10 with CNN (Tab. 1), you can run the following command:
+The main entry point of a single experiment is [`main.py`](main.py). To facilitate experiments running, we provide [`scripts`](exps/) for running the bulk experiments in the paper. For example, to run `BTFL` and other baselines on CIFAR10 with CNN, you can run the following command:
 ```
 python run_exps.py --script_path exps/exp_cifar10_cnn.py
 ```
