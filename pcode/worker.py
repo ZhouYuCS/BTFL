@@ -13,7 +13,7 @@ from pcode.local_training.ttt_worker import TTTWorker
 from pcode.local_training.tsa_worker import TsaWorker
 from pcode.local_training.knn_per_worker import KNNPerWorker
 from pcode.local_training.drfa_worker import DRFAWorker
-
+from pcode.local_training.BTFL_worker import BTFLWorker
 def get_worker_class(conf):
     if not conf.is_personalized:
         return BaseWorker(conf)
@@ -52,5 +52,7 @@ def get_worker_class(conf):
             return DRFAWorker(conf)
         elif conf.personalization_scheme["method"] == "drfa_ft":
             return DRFAWorker(conf, is_fine_tune=True)
+        elif conf.personalization_scheme["method"] == "BTFL":
+            return BTFLWorker(conf, is_fine_tune=False)
         else:
             raise NotImplementedError("invalid personalization_scheme")
