@@ -7,7 +7,10 @@ from pcode.datasets.partition_data import record_class_distribution, partition_b
 import pcode.datasets.prepare_data as prepare_data
 import pcode.datasets.corr_data as corr_data
 import torchvision.transforms as transforms
-
+import numpy as np
+from torch.distributions.dirichlet import Dirichlet
+from torch.distributions.poisson import Poisson
+import random
 """create dataset and load the data_batch."""
 
 
@@ -83,6 +86,10 @@ def _get_transform(data_name, is_training):
         transform = transforms.Compose([normalize])
     elif data_name == "femnist":
         transform = None
+    elif data_name=="oh":
+        transform = transforms.Compose([
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
     elif "pseudo_imagenet" in data_name:
         raise NotImplementedError
     elif "stl10" in data_name:
@@ -142,10 +149,11 @@ class FLData:
             test_dataset=prepare_data.get_dataset(
                 data_name, data_dir, split="test", img_resolution=self.img_resolution
             ),
+             val_data_ratio=self.conf.val_data_ratio
         )
 
         # prepare the natural shifted class
-        if data_name == "cifar10":
+        if data_name == "cifar10" :
             self.data_name = "cifar10"
             assert extra_arg == "cifar10.1"
             natural_shift_test_ds = prepare_data.get_dataset(
@@ -153,14 +161,15 @@ class FLData:
             )
         elif "imagenet" in data_name:
             self.data_name = "imagenet"
-            self.natural_shift_list = ["imagenet_a", "imagenet_r", "imagenet_v2_matched-frequency"]
-            natural_shift_test_ds = {}
-            for d_n in self.natural_shift_list:
-                natural_shift_test_ds[d_n] = prepare_data.get_dataset(
-                    d_n, data_dir, split="test", img_resolution=self.img_resolution
+            self.natural_shift_list =["imagenet_r"]# ["imagenet_r", "imagenet_v2_topimages"] 
+            natural_shift_test_ds = prepare_data.get_dataset(
+                    "imagenet_r", data_dir, split="test", img_resolution=self.img_resolution
                 )
         else:
-            natural_shift_test_ds = None
+            self.data_name="oh"
+            natural_shift_test_ds = prepare_data.get_dataset(
+                    "oh_n", data_dir, split="test", img_resolution=self.img_resolution
+                )
 
         # merge train set and part of test set, keep the remaining test set as backup.
         if is_personalized:
@@ -196,7 +205,7 @@ class FLData:
         data_partitioner = DataPartitioner(
             train_dataset,
             partition_sizes,
-            partition_type="origin",
+            partition_type="random",
             partition_alphas=None,
             consistent_indices=False,
             random_state=self.random_state,
@@ -208,6 +217,7 @@ class FLData:
         # split for val data.
         if val_data_ratio > 0:
             val_dataset = data_partitioner.use(2)
+            test_dataset=data_partitioner.use(1)
             return train_dataset, val_dataset, test_dataset
         else:
             return train_dataset, None, test_dataset
@@ -225,7 +235,7 @@ class FLData:
         data_partitioner = DataPartitioner(
             test_dataset,
             partition_sizes,
-            partition_type="origin",
+            partition_type="random",
             partition_alphas=None,
             consistent_indices=False,
             random_state=self.random_state,
@@ -279,12 +289,12 @@ class FLData:
         )
         # create a data partitioner for natural shift test
         _, hist = record_class_distribution(self.data_partitioner.partitions, self.data_partitioner.data.targets)
-        if self.data_name == "cifar10":
+        if self.data_name == "cifar10" or self.data_name == "imagenet" or self.data_name == "oh":
             self.natural_shift_partitions = partition_by_other_histogram(
                 hist,
                 self.dataset["natural_shift_test"]
             )
-        elif self.data_name == "imagenet":
+        elif self.data_name == "imagenet1":
             self.natural_shift_partitions = {}
             for d_n in self.natural_shift_list:
                 self.natural_shift_partitions[d_n] = partition_by_other_histogram(
@@ -305,14 +315,147 @@ class FLData:
         """partition clients' data to train, val, test."""
         assert hasattr(self, "data_partitioner")
         batch_size = self.batch_size if batch_size is None else int(batch_size)
-
+        other_ids=random.sample( other_ids, len( other_ids))
         # get the partitioned natural distribution shift dataset.
         log_message = f"Data partition for train (client_id={localdata_id + 1})."
         data_to_load = self.data_partitioner.use(localdata_id)
-        if self.data_name == "cifar10":
+        if self.data_name == "cifar10"  or self.data_name == "imagenet" or self.data_name == "oh":
+            # local_natural_shift = set of local shift (natural)
             local_natural_shift = self.natural_shift_partitions[localdata_id]
-            # get the ooc test, and corrupted ooc test, in case of cifar10.
-            ooc_test = []
+            #print(len(local_natural_shift))
+            # ooc_natural_shift = set of ooc shift (natural)
+            ooc_natural_shifts=[]
+            for other_id in other_ids:
+                ooc_natural_shifts.append(self.natural_shift_partitions[other_id])
+            ooc_natural_shift=ConcatDataset(ooc_natural_shifts) 
+            ooc_natural_shift= Subset(
+                dataset=ooc_natural_shift,
+                indices=self.random_state.choice(len(ooc_natural_shift), int(len(ooc_natural_shift)/len(other_ids)), replace=False),
+            )
+            print(len(ooc_natural_shift))
+            # ooc_test = set of ooc original
+            ooc_tests = []
+            local_test_ratio = (1 - local_train_ratio) / 2 
+            for other_id in other_ids:
+                local_data_partitioner = DataPartitioner(
+                    self.data_partitioner.use(other_id - 1),
+                    partition_sizes=[
+                        local_train_ratio,
+                        1 - (local_train_ratio + local_test_ratio),
+                        local_test_ratio,
+                        ],
+                    partition_type="random",
+                    partition_alphas=None,
+                    consistent_indices=False,
+                    random_state=self.random_state,
+                    graph=self.graph,
+                    logger=self.logger,
+                )
+                if self.conf.eval_dataset == "val_loader":
+                    ooc_tests.append(local_data_partitioner.use(1))
+                    ooc_tests.append(local_data_partitioner.use(2))
+                elif self.conf.eval_dataset == "test_loader":
+                    ooc_tests.append(local_data_partitioner.use(1))
+                    ooc_tests.append(local_data_partitioner.use(2))
+                  
+            ooc_test = ConcatDataset(ooc_tests) 
+            ooc_test = Subset(
+                dataset=ooc_test,
+                indices=self.random_state.choice(len(ooc_test), int(len(ooc_test)/len(other_ids)), replace=False),
+            )
+            print(len(ooc_test))
+        
+            # ooc_corr_test = set of ooc shift(corr)
+            ooc_corr_test = corr_data.define_corr_data(
+                    data=ooc_test,
+                    seed=self.conf.corr_seed,
+                    severity=self.conf.corr_severity,
+            )
+            
+            # local_corr_test = set of local shift(corr) 
+            # 本地测试集和训练集还要耦合，所以在 dataloader解藕
+            local_test_ratio = (1 - local_train_ratio) / 2
+            local_data_partitioner = DataPartitioner(
+                data_to_load,
+                partition_sizes=[
+                    local_train_ratio,
+                    1 - (local_train_ratio + local_test_ratio),
+                    local_test_ratio,
+                ],
+                partition_type="random",
+                partition_alphas=None,
+                consistent_indices=False,
+                random_state=self.random_state,
+                graph=self.graph,
+                logger=self.logger,
+            )
+            local_corr_test = corr_data.define_corr_data(
+                    data=local_data_partitioner.use(2) if self.conf.eval_dataset == "test_loader" else local_data_partitioner.use(1),
+                    seed=self.corr_seed,
+                    severity=self.corr_severity,
+                )
+            _create_dataloader_fn_tr = functools.partial(
+                self.create_dataloader, batch_size=batch_size, shuffle=shuffle
+                )
+           
+           
+            _create_dataloader_fn = functools.partial(
+                self.create_dataloader, batch_size=batch_size, shuffle=shuffle
+                )
+          
+
+            data_loader_local_tr = _create_dataloader_fn_tr(local_data_partitioner.use(0))
+            data_loader_local_val = _create_dataloader_fn(local_data_partitioner.use(1))
+            #time_te= Subset(local_data_partitioner.use(2), indices=self.random_state.choice(len(local_data_partitioner.use(2)), 1000, replace=True))
+            data_loader_local_te = _create_dataloader_fn(local_data_partitioner.use(2))
+            #data_loader_local_te = _create_dataloader_fn(time_te)
+            data_loader_ooc_test = _create_dataloader_fn(ooc_test)
+
+            # local shifted
+            local_shifts = ConcatDataset([    
+                    Subset(local_corr_test, indices=self.random_state.choice(len(local_corr_test), len(local_corr_test), replace=False)),      
+                        local_natural_shift,    
+                    ])
+            data_loader_local_shift=_create_dataloader_fn(local_shifts)
+
+            # ooc shifted
+            ooc_shifts = ConcatDataset([    
+                   Subset(ooc_corr_test, indices=self.random_state.choice(len(ooc_corr_test), len(ooc_corr_test), replace=False)),      
+                        ooc_natural_shift,    
+                    ])
+            data_loader_ooc_shift=_create_dataloader_fn(ooc_shifts)
+            
+            # mix
+            local_id_test = local_data_partitioner.use(2) if self.conf.eval_dataset == "test_loader" else local_data_partitioner.use(1)
+            mix=ConcatDataset([ 
+                Subset(ooc_shifts, indices=self.random_state.choice(len(ooc_shifts), int(len(local_natural_shift)/2), replace=False)), 
+                Subset(local_shifts, indices=self.random_state.choice(len(local_shifts), int(len(local_natural_shift)/2), replace=False)),           
+                Subset( ooc_test, indices=self.random_state.choice(len( ooc_test), int(len(local_natural_shift)/2), replace=False)),           
+                Subset( local_id_test, indices=self.random_state.choice(len( local_id_test), int(len(local_natural_shift)/2), replace=False)),           
+             ])
+            #data_loader_mix=_create_dataloader_fn(mix)
+            data_loader_mix=_create_dataloader_fn(mix)
+            data_loaders = {
+                    "train": data_loader_local_tr,
+                    "validation": data_loader_local_val,
+                    "test": data_loader_local_te,
+                    "corr_test": data_loader_local_shift,
+                    #"corr_test": data_loader_local_mixed_test_1,
+                    "ooc_test": data_loader_ooc_test,
+                    #"ooc_corr_test": data_loader_corr_ooc_test,
+                    "ooc_corr_test": data_loader_ooc_shift,
+                    #"ooc_corr_test": data_loader_local_mixed_test_2,
+                    "natural_shift_test": data_loader_local_tr,
+                    #"natural_shift_test": data_loader_my,
+                    "mixed_test": data_loader_mix,
+                    "num_batches_per_device_per_epoch": len(data_loader_local_tr),
+                }    
+        
+        elif self.data_name == "imagenet1":
+            local_natural_shift = {}
+            for d_n in self.natural_shift_list:
+                local_natural_shift[d_n] = self.natural_shift_partitions[d_n][localdata_id]
+            ooc_tests = []
             local_test_ratio = (1 - local_train_ratio) / 2
             for other_id in other_ids:
                 local_data_partitioner = DataPartitioner(
@@ -330,131 +473,48 @@ class FLData:
                     logger=self.logger,
                 )
                 if self.conf.eval_dataset == "val_loader":
-                    ooc_test.append(local_data_partitioner.use(1))
+                    ooc_tests.append(local_data_partitioner.use(1))
                 elif self.conf.eval_dataset == "test_loader":
-                    ooc_test.append(local_data_partitioner.use(2))
-            ooc_test = ConcatDataset(ooc_test)
-            local_ooc_test = Subset(
+                    ooc_tests.append(local_data_partitioner.use(2))
+            ooc_test = ConcatDataset(ooc_tests) 
+            ooc_test = Subset(
                 dataset=ooc_test,
                 indices=self.random_state.choice(len(ooc_test), int(len(ooc_test)/len(other_ids)), replace=False),
             )
-            local_corr_ooc_test = corr_data.define_corr_data(
-                    data=local_ooc_test,
+            ooc_corr_test = corr_data.define_corr_data(
+                    data=ooc_test,
                     seed=self.conf.corr_seed,
                     severity=self.conf.corr_severity,
             )
-        elif self.data_name == "imagenet":
-            local_natural_shift = {}
-            for d_n in self.natural_shift_list:
-                local_natural_shift[d_n] = self.natural_shift_partitions[d_n][localdata_id]
-
-
-        _create_dataloader_fn = functools.partial(
-            self.create_dataloader, batch_size=batch_size, shuffle=shuffle
-        )
-        # create dataloaders.
-        if is_in_childworker:
-            # this means we are in child worker, not base worker.
-            # then we further split the local data into local train and test.
-            # we assume an even partition of validation and test set.
+        else:       
+            # get the ooc test, and corrupted ooc test, in case of cifar10.
+            ooc_tests = []
             local_test_ratio = (1 - local_train_ratio) / 2
-            local_data_partitioner = DataPartitioner(
-                data_to_load,
-                partition_sizes=[
-                    local_train_ratio,
-                    1 - (local_train_ratio + local_test_ratio),
-                    local_test_ratio,
-                ],
-                partition_type="random",
-                partition_alphas=None,
-                consistent_indices=False,
-                random_state=self.random_state,
-                graph=self.graph,
-                logger=self.logger,
+            for other_id in other_ids:
+                local_data_partitioner = DataPartitioner(
+                    self.data_partitioner.use(other_id - 1),
+                    partition_sizes=[
+                        local_train_ratio,
+                        1 - (local_train_ratio + local_test_ratio),
+                        local_test_ratio,
+                        ],
+                    partition_type="random",
+                    partition_alphas=None,
+                    consistent_indices=False,
+                    random_state=self.random_state,
+                    graph=self.graph,
+                    logger=self.logger,
+                )
+                if self.conf.eval_dataset == "val_loader":
+                    ooc_tests.append(local_data_partitioner.use(1))
+                elif self.conf.eval_dataset == "test_loader":
+                    ooc_tests.append(local_data_partitioner.use(2))
+            ooc_test = ConcatDataset(ooc_tests)
+            ooc_test = Subset(
+                dataset=ooc_test,
+                indices=self.random_state.choice(len(ooc_test), int(len(ooc_test)), replace=False),
             )
-            data_loader_local_tr = _create_dataloader_fn(local_data_partitioner.use(0))
-            data_loader_local_val = _create_dataloader_fn(local_data_partitioner.use(1))
-            data_loader_local_te = _create_dataloader_fn(local_data_partitioner.use(2))
-            local_corr_test = corr_data.define_corr_data(
-                    data=local_data_partitioner.use(2) if self.conf.eval_dataset == "test_loader" else local_data_partitioner.use(1),
-                    seed=self.corr_seed,
-                    severity=self.corr_severity,
-                )
-            data_loader_local_corr_te = _create_dataloader_fn(local_corr_test)
-            # create mixed of test.
-            local_id_test = local_data_partitioner.use(2) if self.conf.eval_dataset == "test_loader" else local_data_partitioner.use(1)
-            if self.data_name == "cifar10":
-                if self.conf.weighted_sampling_mixed_test:
-                    # natural shifted test set is the smallest.
-                    local_tests = ConcatDataset([
-                        Subset(local_id_test, indices=self.random_state.choice(len(local_id_test), len(local_natural_shift), replace=False)),
-                        local_natural_shift,
-                        Subset(local_corr_test, indices=self.random_state.choice(len(local_corr_test), len(local_natural_shift), replace=False)),
-                        Subset(local_ooc_test, indices=self.random_state.choice(len(local_ooc_test), len(local_natural_shift), replace=False)),
-                    ])
-                    data_loader_local_mixed_test = _create_dataloader_fn(local_tests)
-                else:
-                    local_tests = ConcatDataset([
-                        local_id_test,
-                        local_natural_shift,
-                        local_corr_test,
-                        local_ooc_test,
-                    ])
-                    data_loader_local_mixed_test = _create_dataloader_fn(
-                        Subset(local_tests, indices=self.random_state.choice(len(local_tests), len(local_id_test), replace=False))
-                    )
-                data_loader_local_natural_shift_te = _create_dataloader_fn(local_natural_shift)
-                data_loader_ooc_test = _create_dataloader_fn(local_ooc_test)
-                data_loader_corr_ooc_test = _create_dataloader_fn(local_corr_ooc_test)
-                data_loaders = {
-                    "train": data_loader_local_tr,
-                    "validation": data_loader_local_val,
-                    "test": data_loader_local_te,
-                    "corr_test": data_loader_local_corr_te,
-                    "ooc_test": data_loader_ooc_test,
-                    "ooc_corr_test": data_loader_corr_ooc_test,
-                    "natural_shift_test": data_loader_local_natural_shift_te,
-                    "mixed_test": data_loader_local_mixed_test,
-                    "num_batches_per_device_per_epoch": len(data_loader_local_tr),
-                }
-            elif self.data_name == "imagenet":
-                local_tests = ConcatDataset([
-                    local_id_test,
-                    local_corr_test,
-                    local_natural_shift[self.natural_shift_list[0]],
-                    local_natural_shift[self.natural_shift_list[1]],
-                    local_natural_shift[self.natural_shift_list[2]],
-                ])
-                data_loader_local_mixed_test = _create_dataloader_fn(
-                    Subset(local_tests, indices=self.random_state.choice(len(local_tests), len(local_data_partitioner.use(2)) if self.conf.eval_dataset == "test_loader" else len(local_data_partitioner.use(1)), replace=False))
-                )
-
-                data_loader_local_a_te = _create_dataloader_fn(local_natural_shift[self.natural_shift_list[0]])
-                data_loader_local_r_te = _create_dataloader_fn(local_natural_shift[self.natural_shift_list[1]])
-                data_loader_local_v2_te = _create_dataloader_fn(local_natural_shift[self.natural_shift_list[2]])
-                data_loaders = {
-                    "train": data_loader_local_tr,
-                    "validation": data_loader_local_val,
-                    "test": data_loader_local_te,
-                    "corr_test": data_loader_local_corr_te,
-                    "natural_shift_test": data_loader_local_v2_te,
-                    "natural_shift_test_a": data_loader_local_a_te,
-                    "natural_shift_test_r": data_loader_local_r_te,
-                    "mixed_test": data_loader_local_mixed_test,
-                    "num_batches_per_device_per_epoch": len(data_loader_local_tr),
-                }
-
-        else:
-            data_loader_local_tr = _create_dataloader_fn(data_to_load)
-            data_loaders = {
-                "train": data_loader_local_tr,
-                "validation": None,
-                "test": None,
-                "corr_test": None,
-                "natural_shift_test": None,
-                "num_batches_per_device_per_epoch": len(data_loader_local_tr),
-            }
-
+       
         if display_log:
             self.logger.log(
                 f"{log_message}: # of tr batches={len(data_loaders['train'])}, # of validation batches={len(data_loaders['validation']) if data_loaders['validation'] is not None else 'NA'}, # of test batches={len(data_loaders['test']) if data_loaders['test'] is not None else 'NA'}, # of corr_test batches={len(data_loaders['corr_test']) if data_loaders['corr_test'] is not None else 'NA'}, # batch_size={batch_size}"
