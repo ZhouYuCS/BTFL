@@ -1,5 +1,6 @@
 # How to Run
-This repostory mainly inherits from [`https://github.com/lins-lab/fedthe`](https://github.com/lins-lab/fedthe), please check this link for environments construction.
+This repostory mainly inherits from [`https://github.com/lins-lab/fedthe`](https://github.com/lins-lab/fedthe), please check this link for environment issues.
+
 The main entry point of a single experiment is [`main.py`](main.py). To facilitate experiments running, we provide [`scripts`](exps/) for running the bulk experiments in the paper. For example, to run `BTFL` and other baselines on CIFAR10 with CNN, you can run the following command:
 ```
 python run_exps.py --script_path exps/exp_cifar10_cnn.py
